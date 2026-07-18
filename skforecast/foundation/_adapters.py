@@ -3098,7 +3098,7 @@ class TiRexAdapter:
         self.multivariate    = multivariate
         self.batch_size      = batch_size
         self.forecast_kwargs = dict(forecast_kwargs) if forecast_kwargs else {}
-        self.is_fitted        = False
+        self.is_fitted       = False
 
     def get_params(self) -> dict:
         """
