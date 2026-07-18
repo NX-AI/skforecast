@@ -472,7 +472,7 @@ Supported adapters (selected automatically from `model_id`):
 | TabICLAdapter (Soda-INRIA) | `soda-inria/tabicl` | Yes (past & future covariates) | 4096 | Any in `(0, 1)` |
 | TabPFNAdapter (Prior Labs) | `priorlabs/tabpfn` | Yes (known-future covariates) | 32768 | Any in `(0, 1)` |
 | T0Adapter (The Forecasting Company) | `theforecastingcompany/t0` | Yes (future-known covariates) | 8192 | Any in `(0, 1)` |
-| TiRexAdapter (NX-AI) | `NX-AI/TiRex-2` | Yes (past & future covariates) | 2048 | `[0.1, 0.2, ..., 0.9]` (interpolated) |
+| TiRexAdapter (NXAI) | `NX-AI/TiRex-2` | Yes (past & future covariates) | 2048 | `[0.1, 0.2, ..., 0.9]` (interpolated) |
 
 Key points:
 - TiRexAdapter natively supports multivariate forecasting: pass `multivariate=True` to jointly forecast multiple series in one call (requires identical exog across series, if any). Default is independent per-series forecasting.

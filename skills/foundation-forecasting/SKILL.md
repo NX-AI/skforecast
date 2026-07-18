@@ -3,7 +3,7 @@ name: foundation-forecasting
 description: >
   Zero-shot time series forecasting with pre-trained foundation models
   (Amazon Chronos-2, Google TimesFM 2.5, Salesforce Moirai-2, Soda-INRIA TabICL,
-  Prior Labs TabPFN-TS, The Forecasting Company T0, NX-AI TiRex-2) via
+  Prior Labs TabPFN-TS, The Forecasting Company T0, NXAI TiRex-2) via
   ForecasterFoundation and FoundationModel. Covers single and multi-series
   workflows, exogenous variables, prediction intervals / quantiles, and
   backtesting. Use when the user wants forecasts without task-specific
@@ -163,7 +163,7 @@ For TimesFM 2.5 and Moirai-2, requested quantiles must be a subset of `[0.1, 0.2
 | `soda-inria/tabicl` (Soda-INRIA)       | Yes  | 4096            | Tabular in-context learning, exog-aware           |
 | `priorlabs/tabpfn-ts` (Prior Labs)     | Yes  | 32768           | Tabular foundation model, exog-aware, long context |
 | `theforecastingcompany/t0` (TFC)       | Yes  | 8192            | Probabilistic forecasts, exog-aware (future covariates) |
-| `NX-AI/TiRex-2` (NX-AI)                | Yes  | 2048            | Natively multivariate, past & future covariates, recurrent architecture |
+| `NX-AI/TiRex-2` (NXAI)                 | Yes  | 2048            | Natively multivariate, past & future covariates, recurrent architecture |
 
 The adapter is resolved automatically from the `model_id` prefix — no need to import adapter classes directly.
 

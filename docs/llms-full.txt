@@ -476,7 +476,7 @@ Supported adapters (selected automatically from `model_id`):
 | TabICLAdapter (Soda-INRIA) | `soda-inria/tabicl` | Yes (past & future covariates) | 4096 | Any in `(0, 1)` |
 | TabPFNAdapter (Prior Labs) | `priorlabs/tabpfn` | Yes (known-future covariates) | 32768 | Any in `(0, 1)` |
 | T0Adapter (The Forecasting Company) | `theforecastingcompany/t0` | Yes (future-known covariates) | 8192 | Any in `(0, 1)` |
-| TiRexAdapter (NX-AI) | `NX-AI/TiRex-2` | Yes (past & future covariates) | 2048 | `[0.1, 0.2, ..., 0.9]` (interpolated) |
+| TiRexAdapter (NXAI) | `NX-AI/TiRex-2` | Yes (past & future covariates) | 2048 | `[0.1, 0.2, ..., 0.9]` (interpolated) |
 
 Key points:
 - TiRexAdapter natively supports multivariate forecasting: pass `multivariate=True` to jointly forecast multiple series in one call (requires identical exog across series, if any). Default is independent per-series forecasting.
@@ -4946,7 +4946,7 @@ For TimesFM 2.5 and Moirai-2, requested quantiles must be a subset of `[0.1, 0.2
 | `soda-inria/tabicl` (Soda-INRIA)       | Yes  | 4096            | Tabular in-context learning, exog-aware           |
 | `priorlabs/tabpfn-ts` (Prior Labs)     | Yes  | 32768           | Tabular foundation model, exog-aware, long context |
 | `theforecastingcompany/t0` (TFC)       | Yes  | 8192            | Probabilistic forecasts, exog-aware (future covariates) |
-| `NX-AI/TiRex-2` (NX-AI)                | Yes  | 2048            | Natively multivariate, past & future covariates, recurrent architecture |
+| `NX-AI/TiRex-2` (NXAI)                 | Yes  | 2048            | Natively multivariate, past & future covariates, recurrent architecture |
 
 The adapter is resolved automatically from the `model_id` prefix — no need to import adapter classes directly.
 
@@ -5107,7 +5107,7 @@ The model is compiled lazily for the exact requested `steps` (up to `max_horizo
 
 Point forecasts use the median (quantile `0.5`). Covariates must be numeric; encode categoricals as numbers before passing them. A series with no future exog is forecast without covariates.
 
-## TiRexAdapter — NX-AI TiRex-2
+## TiRexAdapter — NXAI TiRex-2
 
 - **`model_id` prefix**: `NX-AI/TiRex-2` (also matches `NX-AI/TiRex-2-gifteval-zs`, `NX-AI/TiRex-2-gifteval-pretrain`, `NX-AI/TiRex-2-fevbench`)
 - **`allow_exog`**: `True` — columns present only in `context_exog` map to TiRex-2's `past_covariates` channel; columns present in `exog` (future-known) map to `future_covariates`, built by concatenating their historical and future values into one `[context_length + steps]` stream

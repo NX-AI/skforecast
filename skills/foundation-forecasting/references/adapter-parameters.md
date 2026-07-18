@@ -104,7 +104,7 @@ The model is compiled lazily for the exact requested `steps` (up to `max_horizo
 
 Point forecasts use the median (quantile `0.5`). Covariates must be numeric; encode categoricals as numbers before passing them. A series with no future exog is forecast without covariates.
 
-## TiRexAdapter — NX-AI TiRex-2
+## TiRexAdapter — NXAI TiRex-2
 
 - **`model_id` prefix**: `NX-AI/TiRex-2` (also matches `NX-AI/TiRex-2-gifteval-zs`, `NX-AI/TiRex-2-gifteval-pretrain`, `NX-AI/TiRex-2-fevbench`)
 - **`allow_exog`**: `True` — columns present only in `context_exog` map to TiRex-2's `past_covariates` channel; columns present in `exog` (future-known) map to `future_covariates`, built by concatenating their historical and future values into one `[context_length + steps]` stream

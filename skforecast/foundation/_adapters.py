@@ -2913,7 +2913,7 @@ class T0Adapter:
 
 class TiRexAdapter:
     """
-    Adapter for NX-AI TiRex-2 foundation models.
+    Adapter for NXAI TiRex-2 foundation models.
 
     Parameters
     ----------

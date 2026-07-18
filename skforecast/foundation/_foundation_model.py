@@ -30,7 +30,7 @@ class FoundationModel:
     Scikit-learn compatible interface for foundation time-series models.
 
     Currently supports Amazon Chronos-2, Google TimesFM 2.5, Salesforce
-    Moirai-2, TabICLv2, TabPFN-TS, TFC-T0, and NX-AI TiRex-2. For full
+    Moirai-2, TabICLv2, TabPFN-TS, TFC-T0, and NXAI TiRex-2. For full
     skforecast ecosystem integration (backtesting, model selection, etc.)
     use `ForecasterFoundation` instead.
 
@@ -66,7 +66,7 @@ class FoundationModel:
 
         - `'theforecastingcompany/t0-alpha'`
 
-        NX-AI TiRex-2 (supports `exog`; natively multivariate):
+        NXAI TiRex-2 (supports `exog`; natively multivariate):
 
         - `'NX-AI/TiRex-2'`
         - `'NX-AI/TiRex-2-gifteval-zs'`
@@ -183,10 +183,10 @@ class FoundationModel:
     .. [12] The Forecasting Company T0 - HuggingFace model card.
             https://huggingface.co/theforecastingcompany/t0-alpha
 
-    .. [13] NX-AI TiRex-2 - GitHub repository.
+    .. [13] NXAI TiRex-2 - GitHub repository.
             https://github.com/NX-AI/tirex-2
 
-    .. [14] NX-AI TiRex-2 - HuggingFace model card.
+    .. [14] NXAI TiRex-2 - HuggingFace model card.
             https://huggingface.co/NX-AI/TiRex-2
 
     """
