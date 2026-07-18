@@ -2911,6 +2911,824 @@ class T0Adapter:
         )
 
 
+class TiRexAdapter:
+    """
+    Adapter for NX-AI TiRex-2 foundation models.
+
+    Parameters
+    ----------
+    model_id : str
+        HuggingFace model ID, e.g. `"NX-AI/TiRex-2"`.
+    model : object, default None
+        Pre-loaded `ForecastModel` instance (as returned by `tirex2.load_model`).
+        If `None`, the model is loaded lazily on the first call to `predict`.
+    context_length : int, default 2048
+        Maximum number of historical observations to use as context. At fit
+        time only the last `context_length` observations are stored. At
+        predict time, if `context` is longer than `context_length` it is
+        trimmed to this length; if it is shorter, all available observations
+        are used as-is. Must be a positive integer. The true maximum context
+        supported by a given checkpoint may differ; this default is a
+        conservative value and is not enforced against the loaded checkpoint.
+    device : str, default 'auto'
+        Device placement for the model. `"auto"` selects the best available
+        accelerator (CUDA > MPS > CPU), except that MPS is not supported by
+        TiRex-2's recurrent kernels and falls back to CPU with a warning.
+        Also accepts explicit values such as `"cuda"` or `"cpu"`, forwarded
+        to `tirex2.load_model`.
+    hf_kwargs : dict, default None
+        Additional keyword arguments forwarded to `tirex2.load_model`'s
+        `hf_kwargs`, which in turn forwards them to
+        `huggingface_hub.snapshot_download`. Use this to pass an access
+        token for the gated `NX-AI/TiRex-2` HuggingFace repo, e.g.
+        `{"token": "<HF_TOKEN>"}`, if not already set via `HF_TOKEN` or
+        `huggingface-cli login`.
+    multivariate : bool, default False
+        If `True` and multiple series are being predicted, all series are
+        stacked into a single joint multivariate forecast (TiRex-2 attends
+        across variates jointly), analogous to Chronos's `cross_learning`.
+        If `False` (default), each series is forecast independently via its
+        own single-variate `TimeseriesType`. Joint mode only accepts `exog`
+        that is identical across all series (a single shared covariate
+        block), since TiRex-2 attaches one covariate tensor to the whole
+        multivariate group; a `ValueError` is raised if per-series exog
+        differs. Ignored in single-series mode.
+    batch_size : int, default 512
+        Maximum number of `TimeseriesType` entries forwarded to
+        `ForecastModel.forecast` per call. Forwarded directly as `batch_size`.
+    forecast_kwargs : dict, default None
+        Additional keyword arguments forwarded verbatim to
+        `ForecastModel.forecast` (e.g. `tta_sign_flip`, `tta_diff`).
+
+    Attributes
+    ----------
+    model_id : str
+        HuggingFace model ID.
+    context_ : dict
+        Stored training series after fitting.
+    context_exog_ : dict
+        Stored historical exogenous variables after fitting.
+    context_length : int
+        Maximum number of historical observations used as context.
+    device : str
+        Device placement for the model.
+    hf_kwargs : dict
+        Additional keyword arguments forwarded to `tirex2.load_model`.
+    multivariate : bool
+        Whether joint multivariate forecasting is enabled.
+    batch_size : int
+        Maximum batch size forwarded to `ForecastModel.forecast`.
+    forecast_kwargs : dict
+        Additional keyword arguments forwarded to `ForecastModel.forecast`.
+    is_fitted : bool
+        Whether the adapter has been fitted.
+
+    Notes
+    -----
+    TiRex-2 does not accept a `quantile_levels` argument: it always forecasts
+    at the checkpoint's own fixed quantile grid (9 levels for `NX-AI/TiRex-2`,
+    read from the loaded model at predict time). Requested `quantiles` are
+    obtained by linear interpolation over this native grid (values outside
+    the native range are clamped to the nearest native quantile), following
+    the same interpolation approach TiRex-2 itself uses internally for its
+    FEV integration.
+
+    Covariates map onto TiRex-2's `TimeseriesType` as follows: columns
+    present only in `context_exog` (never known ahead) become `past_covariates`;
+    columns present in `exog` (future-known) become `future_covariates`,
+    built by concatenating their historical values (from `context_exog`, if
+    present) with their future values (from `exog`) into a single
+    `[context_length + steps]` stream, since TiRex-2's `future_covariates`
+    tensor must span the context plus the forecast horizon. Covariates must
+    be numeric; encode categoricals as numbers before passing them.
+
+    The `tirex-2` package requires Python `>=3.11,<3.14` and is only tested
+    on Linux and macOS (its `flashrnn`/`xlstm` dependencies target CUDA
+    kernels; MPS is not supported, see `device` above). The pretrained
+    weights on HuggingFace (`NX-AI/TiRex-2`) are a gated repository: users
+    must accept the model terms and authenticate (`huggingface-cli login`
+    or an `HF_TOKEN`/`hf_kwargs={"token": ...}`) before the first `predict`
+    call can download them.
+
+    References
+    ----------
+    .. [1] https://github.com/NX-AI/tirex-2
+
+    .. [2] https://huggingface.co/NX-AI/TiRex-2
+
+    .. [3] https://arxiv.org/abs/2607.01204
+
+    """
+
+    allow_exog: bool = True
+
+    def __init__(
+        self,
+        model_id: str,
+        *,
+        model: Any | None = None,
+        timeseries_cls: Any | None = None,
+        context_length: int = 2048,
+        device: str = "auto",
+        hf_kwargs: dict[str, Any] | None = None,
+        multivariate: bool = False,
+        batch_size: int = 512,
+        forecast_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Initialise the adapter.
+
+        Parameters
+        ----------
+        model_id : str
+            HuggingFace model ID, e.g. `"NX-AI/TiRex-2"`.
+        model : object, default None
+            Pre-loaded `ForecastModel` instance. If `None`, the model is
+            loaded lazily on the first call to `predict`.
+        timeseries_cls : type, default None
+            `tirex2.TimeseriesType` class used to build model inputs. If
+            `None`, imported lazily from `tirex2` on the first call to
+            `predict`. Intended for testing only.
+        context_length : int, default 2048
+            Maximum number of historical observations to retain as context.
+            At `fit` time only the last `context_length` observations of
+            `series` (and `exog`) are stored. At `predict` time, if
+            `context` is longer than `context_length` it is trimmed to
+            this length before inference; if it is shorter, all available
+            observations are passed as-is. Must be a positive integer.
+        device : str, default 'auto'
+            Device placement for the model. `"auto"` selects the best
+            available accelerator (CUDA > MPS > CPU), falling back from MPS
+            to CPU with a warning since TiRex-2 does not support it. Also
+            accepts explicit values such as `"cuda"` or `"cpu"`.
+        hf_kwargs : dict, default None
+            Additional keyword arguments forwarded to `tirex2.load_model`'s
+            `hf_kwargs` (in turn forwarded to
+            `huggingface_hub.snapshot_download`), e.g. to pass an access
+            token for the gated model repo.
+        multivariate : bool, default False
+            If `True`, multiple series are stacked into a single joint
+            multivariate forecast instead of being forecast independently.
+        batch_size : int, default 512
+            Maximum number of `TimeseriesType` entries forwarded to
+            `ForecastModel.forecast` per call.
+        forecast_kwargs : dict, default None
+            Additional keyword arguments forwarded verbatim to
+            `ForecastModel.forecast`.
+
+        """
+
+        if not isinstance(context_length, int) or context_length < 1:
+            raise ValueError(
+                f"`context_length` must be a positive integer. Got {context_length!r}."
+            )
+        if not isinstance(batch_size, int) or batch_size < 1:
+            raise ValueError(
+                f"`batch_size` must be a positive integer. Got {batch_size!r}."
+            )
+
+        self.model_id        = model_id
+        self._model          = model
+        self._timeseries_cls = timeseries_cls
+        self.context_        = None
+        self.context_exog_   = None
+        self.context_length  = context_length
+        self.device          = device
+        self.hf_kwargs       = dict(hf_kwargs) if hf_kwargs else {}
+        self.multivariate    = multivariate
+        self.batch_size      = batch_size
+        self.forecast_kwargs = dict(forecast_kwargs) if forecast_kwargs else {}
+        self.is_fitted        = False
+
+    def get_params(self) -> dict:
+        """
+        Return the adapter's constructor parameters.
+
+        Returns
+        -------
+        params : dict
+            Keys: `model_id`, `context_length`, `device`, `hf_kwargs`,
+            `multivariate`, `batch_size`, `forecast_kwargs`.
+
+        """
+        return {
+            'model_id':        self.model_id,
+            'context_length':  self.context_length,
+            'device':          self.device,
+            'hf_kwargs':       self.hf_kwargs or None,
+            'multivariate':    self.multivariate,
+            'batch_size':      self.batch_size,
+            'forecast_kwargs': self.forecast_kwargs or None,
+        }
+
+    def set_params(self, **params) -> TiRexAdapter:
+        """
+        Set adapter parameters. Resets the model when `model_id`, `device`,
+        or `hf_kwargs` changes, since those are baked into the loaded model.
+
+        Parameters
+        ----------
+        **params :
+            Valid keys: `model_id`, `context_length`, `device`, `hf_kwargs`,
+            `multivariate`, `batch_size`, `forecast_kwargs`.
+
+        Returns
+        -------
+        self : TiRexAdapter
+
+        """
+
+        valid = {
+            'model_id', 'context_length', 'device', 'hf_kwargs',
+            'multivariate', 'batch_size', 'forecast_kwargs',
+        }
+        invalid = set(params) - valid
+        if invalid:
+            raise ValueError(
+                f"Invalid parameter(s) for TiRexAdapter: {sorted(invalid)}. "
+                f"Valid parameters are: {sorted(valid)}."
+            )
+
+        model_reset_keys = {'model_id', 'device', 'hf_kwargs'}
+        if params.keys() & model_reset_keys:
+            self._model = None
+
+        for key, value in params.items():
+            if key == 'context_length':
+                if not isinstance(value, int) or value < 1:
+                    raise ValueError(
+                        f"`context_length` must be a positive integer. Got {value!r}."
+                    )
+                self.context_length = value
+            elif key == 'batch_size':
+                if not isinstance(value, int) or value < 1:
+                    raise ValueError(
+                        f"`batch_size` must be a positive integer. Got {value!r}."
+                    )
+                self.batch_size = value
+            elif key == 'hf_kwargs':
+                self.hf_kwargs = dict(value) if value else {}
+            elif key == 'forecast_kwargs':
+                self.forecast_kwargs = dict(value) if value else {}
+            else:
+                setattr(self, key, value)
+
+        return self
+
+    def fit(
+        self,
+        context: dict[str, pd.Series],
+        context_exog: dict[str, pd.DataFrame | pd.Series | None],
+    ) -> TiRexAdapter:
+        """
+        Store the training series and optional historical exogenous variables.
+        No model training occurs since TiRex-2 is a zero-shot inference model.
+
+        All input normalization and validation is performed upstream by
+        `FoundationModel`; this method receives canonical dicts only.
+
+        Parameters
+        ----------
+        context : dict pandas Series
+            Normalized training series, one entry per series.
+        context_exog : dict pandas DataFrame, pandas Series, or None
+            Per-series historical exogenous variables (past covariates).
+
+        Returns
+        -------
+        self : TiRexAdapter
+
+        """
+
+        self.context_ = context
+        self.context_exog_ = context_exog
+        self.is_fitted = True
+
+        return self
+
+    def predict(
+        self,
+        steps: int,
+        context: dict[str, pd.Series],
+        context_exog: dict[str, pd.DataFrame | pd.Series | None] | None,
+        exog: dict[str, pd.DataFrame | pd.Series | None] | None,
+        quantiles: list[float] | tuple[float] | None,
+    ) -> dict[str, np.ndarray]:
+        """
+        Generate predictions using the TiRex-2 model.
+
+        All input normalization, validation, and context trimming is
+        performed upstream by `FoundationModel`; this method receives
+        pre-processed dicts only.
+
+        Parameters
+        ----------
+        steps : int
+            Number of steps ahead to forecast.
+        context : dict
+            Per-series context windows (already trimmed to
+            `context_length`).
+        context_exog : dict
+            Per-series past covariates (already trimmed).
+        exog : dict
+            Per-series future covariates for the forecast horizon.
+        quantiles : list of float or None
+            Quantile levels to return. If `None`, only the median (0.5) is
+            produced. Levels outside TiRex-2's native quantile grid are
+            obtained by linear interpolation.
+
+        Returns
+        -------
+        predictions : dict
+            Keys are series names. Each value is a 2-D array of shape
+            `(steps, n_quantiles)`.
+
+        Raises
+        ------
+        ValueError
+            If `multivariate=True`, more than one series is being
+            predicted, and `context_exog` or `exog` differ across series
+            (TiRex-2 attaches a single shared covariate block to a joint
+            multivariate group, so per-series exog cannot be represented),
+            or if the series do not all share the same context length.
+
+        """
+
+        # NOTE: the model and TimeseriesType class are loaded lazily here so
+        # that the adapter can be instantiated and fitted without requiring
+        # tirex-2 to be installed.
+        self._load_model()
+        timeseries_cls = self._get_timeseries_cls()
+
+        series_names_in = list(context.keys())
+        query_levels = list(quantiles) if quantiles is not None else [0.5]
+
+        use_joint = self.multivariate and len(series_names_in) > 1
+        if use_joint:
+            self._validate_shared_exog(series_names_in, context_exog, exog)
+            timeseries_list = [
+                self._build_joint_timeseries(
+                    series_names_in, context, context_exog, exog, steps, timeseries_cls
+                )
+            ]
+        else:
+            timeseries_list = [
+                self._build_series_timeseries(
+                    series         = context[name],
+                    context_exog   = context_exog[name] if context_exog is not None else None,
+                    exog           = exog[name] if exog is not None else None,
+                    steps          = steps,
+                    timeseries_cls = timeseries_cls,
+                )
+                for name in series_names_in
+            ]
+
+        raw_forecasts = self._model.forecast(
+            timeseries        = timeseries_list,
+            prediction_length = steps,
+            output_type       = "numpy",
+            batch_size        = self.batch_size,
+            **self.forecast_kwargs,
+        )
+        native_levels = self._native_quantile_levels()
+
+        predictions: dict[str, np.ndarray] = {}
+        if use_joint:
+            arr = raw_forecasts[0]  # shape (V_t, Q, H)
+            for i, name in enumerate(series_names_in):
+                predictions[name] = self._select_quantiles(arr[i].T, native_levels, query_levels)
+        else:
+            for name, arr in zip(series_names_in, raw_forecasts):
+                predictions[name] = self._select_quantiles(arr[0].T, native_levels, query_levels)
+
+        return predictions
+
+    def _load_model(self) -> None:
+        """
+        Load the TiRex-2 `ForecastModel` into `self._model` if not already set.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ImportError
+            If `tirex-2` is not installed.
+
+        Notes
+        -----
+        The model is imported lazily from `tirex2` and loaded via
+        `tirex2.load_model`. `device="auto"` resolves to the best available
+        accelerator, falling back from MPS to CPU with a warning (TiRex-2's
+        recurrent kernels do not support MPS). This method is a no-op when
+        `self._model` is already populated.
+
+        """
+
+        if self._model is not None:
+            return
+        try:
+            from tirex2 import load_model
+        except ImportError as exc:
+            raise ImportError(
+                "tirex-2 is required for TiRexAdapter. "
+                "Install it with `pip install tirex-2`."
+            ) from exc
+
+        resolved_device = _resolve_torch_device(self.device)
+        if resolved_device == "mps":
+            warnings.warn(
+                "MPS device is not supported by TiRex-2 (its recurrent "
+                "kernels require CUDA). Falling back to CPU.",
+                stacklevel=6,
+            )
+            resolved_device = "cpu"
+
+        self._model = load_model(
+            self.model_id, device=resolved_device, hf_kwargs=self.hf_kwargs or {}
+        )
+
+    def _get_timeseries_cls(self) -> Any:
+        """
+        Return `tirex2.TimeseriesType`, importing it lazily if not already
+        cached or injected via the `timeseries_cls` constructor argument.
+
+        Returns
+        -------
+        timeseries_cls : type
+
+        Raises
+        ------
+        ImportError
+            If `tirex-2` is not installed.
+
+        """
+
+        if self._timeseries_cls is not None:
+            return self._timeseries_cls
+        try:
+            from tirex2 import TimeseriesType
+        except ImportError as exc:
+            raise ImportError(
+                "tirex-2 is required for TiRexAdapter. "
+                "Install it with `pip install tirex-2`."
+            ) from exc
+        self._timeseries_cls = TimeseriesType
+        return self._timeseries_cls
+
+    def _native_quantile_levels(self) -> list[float]:
+        """
+        Return the loaded model's native quantile levels as clean floats.
+
+        Returns
+        -------
+        levels : list of float
+            The checkpoint's fixed quantile grid (e.g. 9 levels for
+            `NX-AI/TiRex-2`), rounded to 6 decimals to remove float32 noise.
+
+        """
+
+        q = self._model.quantiles
+        if hasattr(q, "detach"):
+            q = q.detach().cpu().numpy()
+        else:
+            q = np.asarray(q)
+
+        return [round(float(x), 6) for x in q]
+
+    @staticmethod
+    def _select_quantiles(
+        values: np.ndarray,
+        native_levels: list[float],
+        query_levels: list[float],
+    ) -> np.ndarray:
+        """
+        Linearly interpolate a `(steps, n_native)` quantile array onto
+        arbitrary `query_levels`, clamping at the edges of `native_levels`.
+
+        Parameters
+        ----------
+        values : numpy ndarray
+            Array of shape `(steps, n_native)` holding TiRex-2's native
+            quantile forecast.
+        native_levels : list of float
+            TiRex-2's native quantile levels, matching `values`' last axis,
+            sorted ascending.
+        query_levels : list of float
+            Quantile levels to produce.
+
+        Returns
+        -------
+        result : numpy ndarray
+            Array of shape `(steps, len(query_levels))`.
+
+        """
+
+        native = np.asarray(native_levels, dtype=float)
+        result = np.empty((values.shape[0], len(query_levels)), dtype=np.float64)
+        for i, level in enumerate(query_levels):
+            exact = np.where(np.isclose(native, level, atol=1e-9))[0]
+            if exact.size:
+                result[:, i] = values[:, exact[0]]
+            elif level <= native[0]:
+                result[:, i] = values[:, 0]
+            elif level >= native[-1]:
+                result[:, i] = values[:, -1]
+            else:
+                hi = int(np.searchsorted(native, level))
+                lo = hi - 1
+                weight = (level - native[lo]) / (native[hi] - native[lo])
+                result[:, i] = (1.0 - weight) * values[:, lo] + weight * values[:, hi]
+
+        return result
+
+    @staticmethod
+    def _to_float_array(col_data: pd.Series) -> np.ndarray:
+        """
+        Convert a numeric or boolean covariate column to a `float32` array.
+
+        Parameters
+        ----------
+        col_data : pandas Series
+            A single covariate column.
+
+        Returns
+        -------
+        col_array : numpy ndarray
+            1-D `float32` array.
+
+        Raises
+        ------
+        ValueError
+            If the column is neither numeric nor boolean. TiRex-2 only
+            conditions on numeric covariates; categoricals must be encoded
+            as numbers.
+
+        """
+
+        if pd.api.types.is_numeric_dtype(col_data) or pd.api.types.is_bool_dtype(col_data):
+            return col_data.astype(np.float32).to_numpy()
+
+        raise ValueError(
+            f"TiRexAdapter supports only numeric covariates. Column "
+            f"{col_data.name!r} has dtype {col_data.dtype}. Encode categorical "
+            f"covariates as numeric values before passing them."
+        )
+
+    @classmethod
+    def _covariate_tensors(
+        cls,
+        context_length: int,
+        steps: int,
+        context_exog: pd.DataFrame | pd.Series | None,
+        exog: pd.DataFrame | pd.Series | None,
+    ) -> tuple[Any, Any]:
+        """
+        Build the `(past_covariates, future_covariates)` tensors expected by
+        `TimeseriesType` for one series (or one shared covariate block in
+        joint multivariate mode).
+
+        Columns present only in `context_exog` become `past_covariates`
+        (shape `[V_p, context_length]`). Columns present in `exog` become
+        `future_covariates` (shape `[V_f, context_length + steps]`), built
+        by concatenating their historical values (from `context_exog`, if
+        present, NaN-filled otherwise) with their future values.
+
+        Parameters
+        ----------
+        context_length : int
+            Length of the context window.
+        steps : int
+            Number of forecast steps.
+        context_exog : pandas DataFrame, pandas Series, default None
+            Historical exogenous variables aligned to the context.
+        exog : pandas DataFrame, pandas Series, default None
+            Future-known exogenous variables covering the forecast horizon.
+
+        Returns
+        -------
+        past_covariates : torch Tensor or None
+        future_covariates : torch Tensor or None
+
+        """
+
+        import torch
+
+        past_df = None
+        if context_exog is not None:
+            past_df = (
+                context_exog if isinstance(context_exog, pd.DataFrame)
+                else context_exog.to_frame()
+            )
+        future_df = None
+        if exog is not None:
+            future_df = exog if isinstance(exog, pd.DataFrame) else exog.to_frame()
+
+        future_known_cols = list(future_df.columns) if future_df is not None else []
+        past_only_cols = [
+            col for col in (past_df.columns if past_df is not None else [])
+            if col not in future_known_cols
+        ]
+
+        past_covariates = None
+        if past_only_cols:
+            arr = np.stack(
+                [cls._to_float_array(past_df[col]) for col in past_only_cols]
+            )
+            past_covariates = torch.as_tensor(arr, dtype=torch.float32)
+
+        future_covariates = None
+        if future_known_cols:
+            total_length = context_length + steps
+            arr = np.full((len(future_known_cols), total_length), np.nan, dtype=np.float32)
+            for j, col in enumerate(future_known_cols):
+                future_values = cls._to_float_array(future_df[col])
+                arr[j, context_length:context_length + future_values.shape[0]] = future_values
+                if past_df is not None and col in past_df.columns:
+                    past_values = cls._to_float_array(past_df[col])
+                    arr[j, context_length - past_values.shape[0]:context_length] = past_values
+            future_covariates = torch.as_tensor(arr, dtype=torch.float32)
+
+        return past_covariates, future_covariates
+
+    @classmethod
+    def _build_series_timeseries(
+        cls,
+        series: pd.Series,
+        context_exog: pd.DataFrame | pd.Series | None,
+        exog: pd.DataFrame | pd.Series | None,
+        steps: int,
+        timeseries_cls: Any,
+    ) -> Any:
+        """
+        Build a single-variate `TimeseriesType` for one series.
+
+        Parameters
+        ----------
+        series : pandas Series
+            The series' context window.
+        context_exog : pandas DataFrame, pandas Series, default None
+            Historical exogenous variables aligned to `series`.
+        exog : pandas DataFrame, pandas Series, default None
+            Future-known exogenous variables covering the forecast horizon.
+        steps : int
+            Number of forecast steps.
+        timeseries_cls : type
+            `tirex2.TimeseriesType` class (or a test double with the same
+            `target`/`past_covariates`/`future_covariates` fields).
+
+        Returns
+        -------
+        timeseries : tirex2.TimeseriesType
+            `target` has shape `[1, context_length]`.
+
+        """
+
+        import torch
+
+        target = torch.as_tensor(
+            series.to_numpy(dtype=np.float32), dtype=torch.float32
+        ).unsqueeze(0)
+        past_covariates, future_covariates = cls._covariate_tensors(
+            context_length = target.shape[-1],
+            steps          = steps,
+            context_exog   = context_exog,
+            exog           = exog,
+        )
+
+        return timeseries_cls(
+            target=target, past_covariates=past_covariates, future_covariates=future_covariates
+        )
+
+    @classmethod
+    def _build_joint_timeseries(
+        cls,
+        series_names: list[str],
+        context: dict[str, pd.Series],
+        context_exog: dict[str, pd.DataFrame | pd.Series | None] | None,
+        exog: dict[str, pd.DataFrame | pd.Series | None] | None,
+        steps: int,
+        timeseries_cls: Any,
+    ) -> Any:
+        """
+        Build a single joint multivariate `TimeseriesType` stacking every
+        series in `series_names`.
+
+        Parameters
+        ----------
+        series_names : list of str
+            Series order defining the stacking (variate) order.
+        context : dict
+            Per-series context windows. All must share the same length.
+        context_exog : dict or None
+            Per-series historical exogenous variables. Already validated
+            (by `_validate_shared_exog`) to be identical across series.
+        exog : dict or None
+            Per-series future-known exogenous variables. Already validated
+            to be identical across series.
+        steps : int
+            Number of forecast steps.
+        timeseries_cls : type
+            `tirex2.TimeseriesType` class (or a test double with the same
+            `target`/`past_covariates`/`future_covariates` fields).
+
+        Returns
+        -------
+        timeseries : tirex2.TimeseriesType
+            `target` has shape `[len(series_names), context_length]`.
+
+        Raises
+        ------
+        ValueError
+            If series do not all share the same context length.
+
+        """
+
+        import torch
+
+        lengths = {len(context[name]) for name in series_names}
+        if len(lengths) > 1:
+            raise ValueError(
+                "`multivariate=True` requires all series to share the same "
+                f"context length. Got lengths {sorted(lengths)}."
+            )
+
+        target = torch.as_tensor(
+            np.stack([context[name].to_numpy(dtype=np.float32) for name in series_names]),
+            dtype=torch.float32,
+        )
+        first = series_names[0]
+        past_covariates, future_covariates = cls._covariate_tensors(
+            context_length = target.shape[-1],
+            steps          = steps,
+            context_exog   = context_exog[first] if context_exog is not None else None,
+            exog           = exog[first] if exog is not None else None,
+        )
+
+        return timeseries_cls(
+            target=target, past_covariates=past_covariates, future_covariates=future_covariates
+        )
+
+    @staticmethod
+    def _validate_shared_exog(
+        series_names: list[str],
+        context_exog: dict[str, pd.DataFrame | pd.Series | None] | None,
+        exog: dict[str, pd.DataFrame | pd.Series | None] | None,
+    ) -> None:
+        """
+        Validate that per-series exog is identical across all series, as
+        required to attach a single shared covariate block in joint
+        multivariate mode.
+
+        Parameters
+        ----------
+        series_names : list of str
+            Series being jointly forecast.
+        context_exog : dict or None
+            Per-series historical exogenous variables.
+        exog : dict or None
+            Per-series future-known exogenous variables.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ValueError
+            If `context_exog` or `exog` differ across any two series.
+
+        """
+
+        for label, values in (("context_exog", context_exog), ("exog", exog)):
+            if values is None:
+                continue
+            first_name = series_names[0]
+            first = values.get(first_name)
+            first_df = None
+            if first is not None:
+                first_df = first if isinstance(first, pd.DataFrame) else first.to_frame()
+            for name in series_names[1:]:
+                other = values.get(name)
+                other_df = None
+                if other is not None:
+                    other_df = other if isinstance(other, pd.DataFrame) else other.to_frame()
+                mismatched = (
+                    (first_df is None) != (other_df is None)
+                    or (first_df is not None and not first_df.equals(other_df))
+                )
+                if mismatched:
+                    raise ValueError(
+                        f"`multivariate=True` requires `{label}` to be identical "
+                        "across all series (a single shared covariate block), "
+                        "because TiRex-2's TimeseriesType attaches one covariate "
+                        f"tensor to the whole multivariate group. Series "
+                        f"'{first_name}' and '{name}' have differing `{label}`. "
+                        "Use `multivariate=False` (default) for per-series exog."
+                    )
+
+
 _ADAPTER_REGISTRY: dict[str, type] = {
     "amazon/chronos":    ChronosAdapter,
     "autogluon/chronos": ChronosAdapter,
@@ -2919,6 +3737,7 @@ _ADAPTER_REGISTRY: dict[str, type] = {
     "soda-inria/tabicl": TabICLAdapter,
     "priorlabs/tabpfn":  TabPFNAdapter,
     "theforecastingcompany/t0": T0Adapter,
+    "NX-AI/TiRex-2":     TiRexAdapter,
     # "ibm/TTM": TTMAdapter,
 }
 

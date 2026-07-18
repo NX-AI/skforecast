@@ -9,10 +9,11 @@ from skforecast.foundation._adapters import (
     _resolve_torch_device,
     ChronosAdapter,
     MoiraiAdapter,
+    TiRexAdapter,
 )
 from .fixtures_adapters import (
     y, y_dict,
-    FakePipeline, FakeMoirai2Forecast,
+    FakePipeline, FakeMoirai2Forecast, FakeForecastModel, FakeTimeseriesType,
     prepare_fit_args, prepare_predict_args
 )
 
@@ -357,3 +358,105 @@ def test_MoiraiAdapter_predict_full_pipeline_multiseries_with_device():
     for name in ["s1", "s2"]:
         assert raw[name].shape == (4, 1)
         np.testing.assert_array_almost_equal(raw[name][:, 0], np.full(4, 0.5))
+
+
+# ==============================================================================
+# Tests TiRexAdapter device handling
+# ==============================================================================
+def test_TiRexAdapter_device_default_is_auto():
+    """
+    Test that TiRexAdapter default device is "auto".
+    """
+    adapter = TiRexAdapter(model_id="NX-AI/TiRex-2")
+    assert adapter.device == "auto"
+
+
+@pytest.mark.parametrize(
+    "device",
+    ["auto", "cpu", "cuda", "mps"],
+    ids=lambda d: f"device={d}"
+)
+def test_TiRexAdapter_device_stored_in_get_params(device):
+    """
+    Test that custom device values are stored and returned by get_params.
+    """
+    adapter = TiRexAdapter(model_id="NX-AI/TiRex-2", device=device)
+    assert adapter.device == device
+    assert adapter.get_params()["device"] == device
+
+
+def test_TiRexAdapter_set_params_device_resets_model():
+    """
+    Test that changing device via set_params resets the cached _model to
+    None.
+    """
+    adapter = TiRexAdapter(model_id="NX-AI/TiRex-2", model=FakeForecastModel())
+    assert adapter._model is not None
+    adapter.set_params(device="cpu")
+    assert adapter._model is None
+    assert adapter.device == "cpu"
+
+
+def test_TiRexAdapter_load_model_passes_resolved_device():
+    """
+    Test that _load_model forwards the resolved device to
+    tirex2.load_model, along with model_id and hf_kwargs.
+    """
+    mock_load_model = MagicMock(return_value=FakeForecastModel())
+    adapter = TiRexAdapter(
+        model_id="NX-AI/TiRex-2", device="cuda", hf_kwargs={"token": "abc"}
+    )
+
+    with patch.dict("sys.modules", {"tirex2": MagicMock(load_model=mock_load_model)}):
+        adapter._load_model()
+
+    mock_load_model.assert_called_once_with(
+        "NX-AI/TiRex-2", device="cuda", hf_kwargs={"token": "abc"}
+    )
+
+
+def test_TiRexAdapter_load_model_auto_mps_falls_back_to_cpu():
+    """
+    Test that _load_model with device="auto" falls back to CPU when the
+    resolved device is "mps" (not supported by TiRex-2's recurrent
+    kernels, which require CUDA). A warning is also issued.
+    """
+    mock_load_model = MagicMock(return_value=FakeForecastModel())
+    adapter = TiRexAdapter(model_id="NX-AI/TiRex-2", device="auto")
+
+    with patch(
+        "skforecast.foundation._adapters._resolve_torch_device",
+        return_value="mps"
+    ):
+        with patch.dict("sys.modules", {"tirex2": MagicMock(load_model=mock_load_model)}):
+            with pytest.warns(UserWarning, match="MPS device is not supported"):
+                adapter._load_model()
+
+    mock_load_model.assert_called_once_with(
+        "NX-AI/TiRex-2", device="cpu", hf_kwargs={}
+    )
+
+
+def test_TiRexAdapter_predict_full_pipeline_with_device():
+    """
+    Test that the full fit → predict pipeline works with an explicit
+    device. Uses FakeForecastModel so no actual GPU/tirex-2 is needed.
+    """
+    adapter = TiRexAdapter(
+        model_id="NX-AI/TiRex-2",
+        model=FakeForecastModel(),
+        timeseries_cls=FakeTimeseriesType,
+        device="cpu",
+    )
+    ctx, ctx_exog = prepare_fit_args(y)
+    adapter.fit(context=ctx, context_exog=ctx_exog)
+
+    ctx_p, ctx_exog_p, exog_p = prepare_predict_args(adapter, steps=5)
+    raw = adapter.predict(
+        steps=5, context=ctx_p, context_exog=ctx_exog_p,
+        exog=exog_p, quantiles=[0.1, 0.5, 0.9]
+    )
+
+    assert raw["sales"].shape == (5, 3)
+    for i, q in enumerate([0.1, 0.5, 0.9]):
+        np.testing.assert_array_almost_equal(raw["sales"][:, i], np.full(5, q))

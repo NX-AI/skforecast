@@ -104,6 +104,26 @@ The model is compiled lazily for the exact requested `steps` (up to `max_horizo
 
 Point forecasts use the median (quantile `0.5`). Covariates must be numeric; encode categoricals as numbers before passing them. A series with no future exog is forecast without covariates.
 
+## TiRexAdapter — NX-AI TiRex-2
+
+- **`model_id` prefix**: `NX-AI/TiRex-2` (also matches `NX-AI/TiRex-2-gifteval-zs`, `NX-AI/TiRex-2-gifteval-pretrain`, `NX-AI/TiRex-2-fevbench`)
+- **`allow_exog`**: `True` — columns present only in `context_exog` map to TiRex-2's `past_covariates` channel; columns present in `exog` (future-known) map to `future_covariates`, built by concatenating their historical and future values into one `[context_length + steps]` stream
+- **Quantiles**: any value in `(0, 1)` (native levels `[0.1, 0.2, ..., 0.9]`; other levels are produced by linear interpolation, clamped at the edges)
+- **Multivariate**: natively multivariate — `multivariate=True` stacks all series into one joint `TimeseriesType` (TiRex-2 attends across variates jointly); requires `exog` (if any) to be identical across all series, since one covariate block is shared by the whole group. Default `multivariate=False` forecasts each series independently.
+
+| Parameter         | Type   | Default  | Description                                                                |
+|-------------------|--------|----------|----------------------------------------------------------------------------|
+| `model_id`        | str    | —        | HuggingFace model ID (e.g. `NX-AI/TiRex-2`).                              |
+| `model`           | obj    | `None`   | Pre-loaded `ForecastModel`. If `None`, loaded lazily on first `predict`.   |
+| `context_length`  | int    | `2048`   | Max historical observations kept as context (not enforced against the checkpoint's true capacity). |
+| `device`          | str    | `'auto'` | Device placement: `'auto'` (CUDA > MPS > CPU, MPS falls back to CPU with a warning since TiRex-2 requires CUDA), `'cuda'`, `'cpu'`. |
+| `hf_kwargs`       | dict   | `None`   | Forwarded to `tirex2.load_model`'s `hf_kwargs` (in turn to `huggingface_hub.snapshot_download`), e.g. an access token for the gated model repo. |
+| `multivariate`    | bool   | `False`  | If `True`, jointly forecast multiple series (see above). Ignored in single-series mode. |
+| `batch_size`      | int    | `512`    | Max `TimeseriesType` entries forwarded to `ForecastModel.forecast` per call. |
+| `forecast_kwargs` | dict   | `None`   | Extra kwargs forwarded to `ForecastModel.forecast` (e.g. `tta_sign_flip`, `tta_diff`). |
+
+The pretrained weights on HuggingFace (`NX-AI/TiRex-2`) are a gated repository: authenticate with `huggingface-cli login` or an `HF_TOKEN`/`hf_kwargs={"token": ...}` before the first `predict` call. The `tirex-2` package requires Python `>=3.11,<3.14` and is only tested on Linux and macOS.
+
 ## Common Behavior
 
 All adapters implement the same minimal interface:

@@ -1,5 +1,7 @@
 # Fixtures for adapter tests (Chronos2, TimesFM25, Moirai)
 # ==============================================================================
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 from skforecast.foundation._utils import (
@@ -418,3 +420,54 @@ class FakeTabPFNTSPipeline:
             data[q] = [r[q] for r in rows]
 
         return pd.DataFrame(data, index=index)
+
+
+# Fake TiRex-2 TimeseriesType / ForecastModel
+# ==============================================================================
+@dataclass
+class FakeTimeseriesType:
+    """
+    Duck-typed stand-in for `tirex2.TimeseriesType`, avoiding a hard
+    dependency on `tirex-2`/`torch` internals in the adapter's own tests.
+    Fields mirror the real dataclass exactly.
+    """
+
+    target: object
+    past_covariates: object
+    future_covariates: object
+
+
+class FakeForecastModel:
+    """
+    Fake `tirex2.ForecastModel` for testing without torch/tirex-2.
+
+    `forecast()` returns quantile values equal to the quantile level itself
+    for every step and every target variate, making assertions
+    straightforward. Records the last call's arguments for inspection.
+    """
+
+    def __init__(self, quantiles=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)):
+        self.quantiles = np.array(quantiles, dtype=np.float32)
+        self.last_timeseries = None
+        self.last_prediction_length = None
+        self.last_batch_size = None
+        self.last_kwargs = None
+
+    def forecast(self, timeseries, prediction_length, output_type="numpy",
+                 batch_size=512, **kwargs):
+        self.last_timeseries = timeseries
+        self.last_prediction_length = prediction_length
+        self.last_batch_size = batch_size
+        self.last_kwargs = kwargs
+
+        n_q = len(self.quantiles)
+        forecasts = []
+        for ts in timeseries:
+            n_variates = ts.target.shape[0]
+            arr = np.broadcast_to(
+                self.quantiles.reshape(1, n_q, 1),
+                (n_variates, n_q, prediction_length),
+            ).copy()
+            forecasts.append(arr)
+
+        return forecasts

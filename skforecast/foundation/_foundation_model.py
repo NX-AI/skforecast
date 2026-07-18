@@ -30,9 +30,9 @@ class FoundationModel:
     Scikit-learn compatible interface for foundation time-series models.
 
     Currently supports Amazon Chronos-2, Google TimesFM 2.5, Salesforce
-    Moirai-2, TabICLv2, TabPFN-TS, and TFC-T0. For full skforecast ecosystem
-    integration (backtesting, model selection, etc.) use `ForecasterFoundation` 
-    instead.
+    Moirai-2, TabICLv2, TabPFN-TS, TFC-T0, and NX-AI TiRex-2. For full
+    skforecast ecosystem integration (backtesting, model selection, etc.)
+    use `ForecasterFoundation` instead.
 
     Parameters
     ----------
@@ -66,14 +66,21 @@ class FoundationModel:
 
         - `'theforecastingcompany/t0-alpha'`
 
+        NX-AI TiRex-2 (supports `exog`; natively multivariate):
+
+        - `'NX-AI/TiRex-2'`
+        - `'NX-AI/TiRex-2-gifteval-zs'`
+        - `'NX-AI/TiRex-2-gifteval-pretrain'`
+        - `'NX-AI/TiRex-2-fevbench'`
+
         See References for links to model documentation and model cards.
     **kwargs :
         Additional keyword arguments forwarded to the underlying adapter.
         Valid keys depend on the adapter selected by `model_id`. See the
         corresponding adapter class (`ChronosAdapter`, `TimesFMAdapter`,
-        `MoiraiAdapter`, `TabICLAdapter`, `TabPFNAdapter`, `T0Adapter`) 
-        for the full parameter list, or refer to the model documentation 
-        linked in the References section below.
+        `MoiraiAdapter`, `TabICLAdapter`, `TabPFNAdapter`, `T0Adapter`,
+        `TiRexAdapter`) for the full parameter list, or refer to the model
+        documentation linked in the References section below.
 
     Attributes
     ----------
@@ -175,7 +182,12 @@ class FoundationModel:
 
     .. [12] The Forecasting Company T0 - HuggingFace model card.
             https://huggingface.co/theforecastingcompany/t0-alpha
-    
+
+    .. [13] NX-AI TiRex-2 - GitHub repository.
+            https://github.com/NX-AI/tirex-2
+
+    .. [14] NX-AI TiRex-2 - HuggingFace model card.
+            https://huggingface.co/NX-AI/TiRex-2
 
     """
 
