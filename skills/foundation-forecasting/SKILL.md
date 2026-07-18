@@ -213,4 +213,4 @@ automatically to the last `context_length` observations.
 3. **Passing `exog` to TimesFM 2.5 / Moirai-2**: ignored. Only Chronos-2, TabICL, TabPFN-TS and TFC-T0 support exogenous variables.
 4. **Requesting unsupported quantiles**: TimesFM 2.5 and Moirai-2 are restricted to the nine deciles `0.1 … 0.9`.
 5. **Large model downloads**: first call can be slow; consider using smaller variants (`*-small`) for experimentation.
-6. **Forgetting to install the backend**: each foundation model requires its own library (`chronos-forecasting`, `timesfm`, `uni2ts`, `tabicl`, `tabpfn-time-series`, `tfc-t0`). Install only the one(s) you need.
+6. **Forgetting to install the backend**: each foundation model requires its own library (`chronos-forecasting`, `timesfm`, `uni2ts`, `tabicl`, `tabpfn-time-series`, `tfc-t0`, `tirex-2`). Install only the one(s) you need.

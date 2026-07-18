@@ -140,7 +140,7 @@ predictions = forecaster.predict_quantiles(
 )
 ```
 
-TimesFM 2.5 and Moirai-2 restrict quantiles to `[0.1, 0.2, …, 0.9]`; Chronos-2, TabICL, TabPFN-TS and TFC-T0 accept any quantile in `(0, 1)`. See the `foundation-forecasting` skill for details.
+TimesFM 2.5 and Moirai-2 restrict quantiles to `[0.1, 0.2, …, 0.9]`; Chronos-2, TabICL, TabPFN-TS and TFC-T0 accept any quantile in `(0, 1)` natively. TiRex-2 also accepts any quantile in `(0, 1)`, but levels outside its native `[0.1, …, 0.9]` grid are obtained by interpolation rather than modeled directly. See the `foundation-forecasting` skill for details.
 
 ## During Backtesting
 

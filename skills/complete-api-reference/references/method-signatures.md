@@ -158,6 +158,7 @@ FoundationModel(
                                #   point_estimate, tabicl_config, temporal_features (TabICL)
                                #   mode, point_estimate, tabpfn_model_config, temporal_features (TabPFN-TS)
                                #   (T0 uses only context_length, device_map, torch_dtype)
+                               #   multivariate, hf_kwargs, batch_size, forecast_kwargs (TiRex-2)
 )
 
 ForecasterFoundation(

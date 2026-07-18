@@ -2573,7 +2573,7 @@ predictions = forecaster.predict_quantiles(
 )
 ```
 
-TimesFM 2.5 and Moirai-2 restrict quantiles to `[0.1, 0.2, …, 0.9]`; Chronos-2, TabICL, TabPFN-TS and TFC-T0 accept any quantile in `(0, 1)`. See the `foundation-forecasting` skill for details.
+TimesFM 2.5 and Moirai-2 restrict quantiles to `[0.1, 0.2, …, 0.9]`; Chronos-2, TabICL, TabPFN-TS and TFC-T0 accept any quantile in `(0, 1)` natively. TiRex-2 also accepts any quantile in `(0, 1)`, but levels outside its native `[0.1, …, 0.9]` grid are obtained by interpolation rather than modeled directly. See the `foundation-forecasting` skill for details.
 
 ## During Backtesting
 
@@ -4996,7 +4996,7 @@ automatically to the last `context_length` observations.
 3. **Passing `exog` to TimesFM 2.5 / Moirai-2**: ignored. Only Chronos-2, TabICL, TabPFN-TS and TFC-T0 support exogenous variables.
 4. **Requesting unsupported quantiles**: TimesFM 2.5 and Moirai-2 are restricted to the nine deciles `0.1 … 0.9`.
 5. **Large model downloads**: first call can be slow; consider using smaller variants (`*-small`) for experimentation.
-6. **Forgetting to install the backend**: each foundation model requires its own library (`chronos-forecasting`, `timesfm`, `uni2ts`, `tabicl`, `tabpfn-time-series`, `tfc-t0`). Install only the one(s) you need.
+6. **Forgetting to install the backend**: each foundation model requires its own library (`chronos-forecasting`, `timesfm`, `uni2ts`, `tabicl`, `tabpfn-time-series`, `tfc-t0`, `tirex-2`). Install only the one(s) you need.
 
 ---
 ### Reference: adapter-parameters
@@ -5135,7 +5135,7 @@ All adapters implement the same minimal interface:
 - `predict(steps, context, context_exog, exog, quantiles)` — returns a   `dict[str, np.ndarray]` of shape `(steps, n_quantiles)` keyed by series name.
 - `get_params()` / `set_params(**kwargs)` — sklearn-style parameter access.
 
-Backend libraries (`chronos-forecasting`, `timesfm`, `uni2ts`, `tabicl`, `tabpfn-time-series`, `tfc-t0`) are imported **lazily** inside the adapter method that needs them, so only the backend for the adapter you actually use needs to be installed.
+Backend libraries (`chronos-forecasting`, `timesfm`, `uni2ts`, `tabicl`, `tabpfn-time-series`, `tfc-t0`, `tirex-2`) are imported **lazily** inside the adapter method that needs them, so only the backend for the adapter you actually use needs to be installed.
 
 ================================================================================
 # SKILL: choosing-a-forecaster
@@ -5174,7 +5174,7 @@ Skforecast is a **machine learning-first** library. The ML forecasters are the p
 | **General purpose** (start here) | `ForecasterRecursive` | Default choice. One model, recursive multi-step. Works with any sklearn-compatible estimator (LightGBM, XGBoost, CatBoost, RandomForest, etc.). Supports lags, window features, exog, differentiation, transformers, weight functions, and all probabilistic prediction methods (bootstrapping, conformal, quantiles, distributions) |
 | **Horizon-dependent patterns** (e.g., predicting at 1h vs 24h requires different relationships) | `ForecasterDirect` | Trains one independent model per step — no error propagation. Better when the predictive relationship changes significantly across the forecast horizon. Requires `steps` at init; parallelizable with `n_jobs` |
 | **Statistical baseline** | `ForecasterStats` | Wraps ARIMA, SARIMAX, ETS, ARAR. Use as a benchmark to compare against ML models, or when the series is very short (< 200 obs) and ML overfits |
-| **Zero-shot / cold-start / no training data** | `ForecasterFoundation` | Wraps pre-trained foundation models (Chronos-2, TimesFM 2.5, Moirai-2, TabICL, TabPFN-TS, TFC-T0). `fit()` only stores context — no training. Good baseline and cold-start option. See the `foundation-forecasting` skill |
+| **Zero-shot / cold-start / no training data** | `ForecasterFoundation` | Wraps pre-trained foundation models (Chronos-2, TimesFM 2.5, Moirai-2, TabICL, TabPFN-TS, TFC-T0, TiRex-2). `fit()` only stores context — no training. Good baseline and cold-start option. See the `foundation-forecasting` skill |
 | **Naive baseline** | `ForecasterEquivalentDate` | Predicts using equivalent past dates (e.g., same weekday last week). Use as a sanity-check baseline |
 
 ## Step 2b — Multiple Series
@@ -5184,7 +5184,7 @@ Skforecast is a **machine learning-first** library. The ML forecasters are the p
 | **Forecast many series with a shared model** (start here) | `ForecasterRecursiveMultiSeries` | One global model learns cross-series patterns. Supports DataFrame or dict input (dict allows series with different date ranges). Encoding options: `'ordinal'` (default), `'ordinal_category'`, `'onehot'`, `None`. Supports per-series transformers, per-series differentiation, series_weights |
 | **Other series are features for one target** | `ForecasterDirectMultiVariate` | All series become input features to predict a single `level`. Per-series lags via dict (`{'sales': [1,7], 'price': [1]}`). One model per step — no error propagation |
 | **Deep learning / complex nonlinear patterns** | `ForecasterRnn` | Keras-based RNN/LSTM/GRU. Single model outputs all steps and levels simultaneously via 3D tensors. Only conformal intervals (no bootstrapping). Requires keras |
-| **Zero-shot / pre-trained generalist** | `ForecasterFoundation` | Global zero-shot forecasts via Chronos-2 / TimesFM 2.5 / Moirai-2 / TabICL / TabPFN-TS / TFC-T0. `fit()` only stores context. Native quantile intervals. Chronos-2, TabICL, TabPFN-TS, and TFC-T0 support exog; TimesFM 2.5 & Moirai-2 do not. See the `foundation-forecasting` skill |
+| **Zero-shot / pre-trained generalist** | `ForecasterFoundation` | Global zero-shot forecasts via Chronos-2 / TimesFM 2.5 / Moirai-2 / TabICL / TabPFN-TS / TFC-T0 / TiRex-2. `fit()` only stores context. Native quantile intervals. Chronos-2, TabICL, TabPFN-TS, TFC-T0, and TiRex-2 support exog; TimesFM 2.5 & Moirai-2 do not. See the `foundation-forecasting` skill |
 
 ## Decision Flowchart
 
@@ -5217,7 +5217,7 @@ How many series?
         └─► ForecasterRnn
 
 Zero-shot / no training data / cold-start (single or multi-series)?
-    └─► ForecasterFoundation (Chronos-2 / TimesFM 2.5 / Moirai-2 / TabICL / TabPFN-TS / TFC-T0)
+    └─► ForecasterFoundation (Chronos-2 / TimesFM 2.5 / Moirai-2 / TabICL / TabPFN-TS / TFC-T0 / TiRex-2)
 ```
 
 ## Key Comparisons
@@ -5545,7 +5545,7 @@ the complete reference, including:
 - `ForecasterStats` — statistical models (ARIMA, ETS, SARIMAX, ARAR)
 - `ForecasterEquivalentDate` — baseline using past offsets
 - `ForecasterRnn` — deep learning (RNN/LSTM/GRU)
-- `ForecasterFoundation` — zero-shot with foundation models (Chronos-2, TimesFM 2.5, Moirai-2, TabICL, TabPFN-TS, TFC-T0)
+- `ForecasterFoundation` — zero-shot with foundation models (Chronos-2, TimesFM 2.5, Moirai-2, TabICL, TabPFN-TS, TFC-T0, TiRex-2)
 - `FoundationModel` — low-level foundation model wrapper used by `ForecasterFoundation`
 
 ### Forecaster Methods
@@ -5739,6 +5739,7 @@ FoundationModel(
                                #   point_estimate, tabicl_config, temporal_features (TabICL)
                                #   mode, point_estimate, tabpfn_model_config, temporal_features (TabPFN-TS)
                                #   (T0 uses only context_length, device_map, torch_dtype)
+                               #   multivariate, hf_kwargs, batch_size, forecast_kwargs (TiRex-2)
 )
 
 ForecasterFoundation(
